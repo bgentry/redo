@@ -67,7 +67,10 @@ cmd(NameOrPid, Cmd, Timeout) when is_integer(Timeout) ->
 
     %% send the commands and receive back
     %% unique refs for each packet sent
+    TimeBefore = erlang:now(),
     Refs = gen_server:call(NameOrPid, {cmd, Packets}, 2000),
+    Time = timer:now_diff(erlang:now(), TimeBefore) div 1000,
+    Time > 0 andalso hermes_log:log(?MODULE, info, "event=cmd time=~w req=~p pid=~p", [Time, get(request_id), NameOrPid]),
     receive_resps(NameOrPid, Refs, Timeout).
 
 receive_resps(_NameOrPid, {error, Err}, _Timeout) ->
