@@ -67,29 +67,42 @@ cmd(NameOrPid, Cmd, Timeout) when is_integer(Timeout) ->
 
     %% send the commands and receive back
     %% unique refs for each packet sent
-    TimeBefore = erlang:now(),
-    Refs = gen_server:call(NameOrPid, {cmd, Packets}, 2000),
-    Time = timer:now_diff(erlang:now(), TimeBefore) div 1000,
-    Time > 0 andalso hermes_log:log(?MODULE, info, "event=cmd time=~w req=~p pid=~p", [Time, get(request_id), NameOrPid]),
-    receive_resps(NameOrPid, Refs, Timeout).
+    A = erlang:now(),
+    {ok, B, C, Refs} = gen_server:call(NameOrPid, {cmd, Packets}, 2000),
+    D = erlang:now(),
+    receive_resps(NameOrPid, Refs, Timeout, {A,B,C,D}).
 
-receive_resps(_NameOrPid, {error, Err}, _Timeout) ->
+receive_resps(_NameOrPid, {error, Err}, _Timeout, _) ->
     {error, Err};
 
-receive_resps(NameOrPid, [Ref], Timeout) ->
+receive_resps(NameOrPid, [Ref], Timeout, Stats) ->
     %% for a single packet, receive a single reply
-    receive_resp(NameOrPid, Ref, Timeout);
+    receive_resp(NameOrPid, Ref, Timeout, Stats);
 
-receive_resps(NameOrPid, Refs, Timeout) ->
+receive_resps(NameOrPid, Refs, Timeout, Stats) ->
     %% for multiple packets, build a list of replies
-    [receive_resp(NameOrPid, Ref, Timeout) || Ref <- Refs].
+    [receive_resp(NameOrPid, Ref, Timeout, Stats) || Ref <- Refs].
 
-receive_resp(NameOrPid, Ref, Timeout) ->
+receive_resp(NameOrPid, Ref, Timeout, {A,B,C,D}) ->
+    E = now(),
     receive
         %% the connection to the redis server was closed
         {Ref, closed} ->
             {error, closed};
-        {Ref, Val} ->
+        {Ref, F, Val} ->
+            G = now(),
+            timer:now_diff(G,A) div 1000 > 100
+                andalso hermes_log:log(?MODULE, info, "event=cmd req=~p pid=~p time1=~w time2=~w time3=~w time4=~w time5=~w time6=~w total=~w~n", [
+                    get(request_id),
+                    NameOrPid,
+                    timer:now_diff(B,A) div 1000,
+                    timer:now_diff(C,B) div 1000,
+                    timer:now_diff(D,C) div 1000,
+                    timer:now_diff(E,D) div 1000,
+                    timer:now_diff(F,E) div 1000,
+                    timer:now_diff(G,F) div 1000,
+                    timer:now_diff(G,A) div 1000
+                ]),
             Val
     %% after the timeout expires, cancel the command and return
     after Timeout ->
@@ -136,6 +149,7 @@ init([Opts]) ->
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
 handle_call({cmd, Packets}, {From, _Ref}, #state{subscriber=undefined, queue=Queue}=State) ->
+    B = now(),
     case test_connection(State) of
         State1 when is_record(State1, state) ->
             %% send each packet to redis
@@ -158,7 +172,8 @@ handle_call({cmd, Packets}, {From, _Ref}, #state{subscriber=undefined, queue=Que
                         fun(Ref, Acc) ->
                             queue:in({From, Ref}, Acc)
                         end, Queue, Refs1),
-                    {reply, Refs1, State1#state{queue=Queue1}};
+                    C = now(),
+                    {reply, {ok, B, C, Refs1}, State1#state{queue=Queue1}};
                 Err ->
                     {stop, Err, State1}
             end;
@@ -384,7 +399,7 @@ process_packet(#state{acc=Acc, queue=Queue, subscriber=Subscriber}=State, Packet
     end.
 
 send_response(Pid, Ref, Result, Rest, State, Queue) ->
-    Pid ! {Ref, Result},
+    Pid ! {Ref, now(), Result},
     case Rest of
         {raw, <<>>} ->
             %% we have reached the end of this tcp packet
